@@ -1,0 +1,164 @@
+dataset:
+  target_size: 10000
+  output_format: alpaca
+  output_dir: dataset/final
+  raw_dir: dataset/raw
+  seed: 42
+
+generation:
+  model: "gemini-1.5-flash"
+  temperature: 0.7
+  max_tokens: 1200
+  batch_size: 10
+
+task_distribution:
+  qa_concepts: 0.15
+  stock_analysis: 0.15
+  mf_guidance: 0.15
+  portfolio_construction: 0.20
+  portfolio_analysis: 0.10
+  comparative_analysis: 0.10
+  taxation: 0.08
+  refusals: 0.07
+
+quality:
+  min_output_length: 100
+  max_output_length: 800
+  require_disclaimer: true
+  duplicate_threshold: 0.85
+  reject_guarantee_phrases:
+    - "guaranteed returns"
+    - "will definitely"
+    - "100% safe"
+    - "no risk"
+    - "assured profit"
+    - "sure shot"
+
+system_prompt: |
+  You are FinBot, an expert Indian financial analyst and advisor with deep knowledge of:
+  - Indian equity markets (NSE, BSE) — stocks, IPOs, F&O fundamentals
+  - Mutual Funds regulated by AMFI/SEBI — equity, debt, hybrid, ELSS, index funds
+  - Fixed income — G-Secs, corporate bonds, tax-free bonds, Sovereign Gold Bonds, FDs
+  - ETFs, REITs, InvITs listed on Indian exchanges
+  - Indian taxation — LTCG, STCG, 80C, 80D, indexation, TDS
+  - SEBI regulations, RBI monetary policy, repo rate impacts
+  - Goal-based financial planning — retirement, education, home purchase, wealth creation
+  - NPS, PPF, EPF, and government savings schemes
+
+  Your core principles:
+  1. Always ground advice in Indian market context and current SEBI/AMFI regulations
+  2. Always include risk disclaimers on investment advice
+  3. Never guarantee specific returns or claim instruments are risk-free
+  4. Ask about risk profile and time horizon before giving portfolio advice
+  5. Clearly distinguish between financial education and personalized advice
+  6. Recommend consulting a SEBI-registered advisor (RIA) for large/complex decisions
+  7. Use Indian currency (₹), Indian financial year (April–March), and Indian tax laws
+  8. Cite publicly verifiable data sources where possible (NSE, AMFI, RBI)
+
+user_personas:
+  ages: [22, 25, 27, 28, 30, 32, 35, 38, 40, 42, 45, 48, 50, 55, 58, 60, 63, 65]
+  monthly_incomes:
+    - 20000
+    - 35000
+    - 50000
+    - 75000
+    - 100000
+    - 150000
+    - 250000
+    - 500000
+    - 1000000
+  monthly_investments:
+    - 2000
+    - 5000
+    - 10000
+    - 15000
+    - 20000
+    - 30000
+    - 50000
+    - 100000
+    - 200000
+  goals:
+    - retirement
+    - child_education
+    - home_purchase
+    - emergency_fund
+    - wedding
+    - foreign_trip
+    - car_purchase
+    - wealth_creation
+    - passive_income
+    - tax_saving
+  risk_profiles:
+    - conservative
+    - moderate_conservative
+    - moderate
+    - moderate_aggressive
+    - aggressive
+  horizons_years: [1, 2, 3, 5, 7, 10, 12, 15, 20, 25, 30]
+  personas:
+    - first_job_graduate
+    - working_professional
+    - senior_professional
+    - business_owner
+    - retiree
+    - homemaker
+    - nri
+    - senior_citizen
+    - student
+
+indian_stocks:
+  IT: ["TCS", "Infosys", "Wipro", "HCL Technologies", "Tech Mahindra", "LTIMindtree", "Mphasis", "Persistent Systems"]
+  Banking: ["HDFC Bank", "ICICI Bank", "SBI", "Kotak Mahindra Bank", "Axis Bank", "IndusInd Bank", "Bank of Baroda", "Punjab National Bank"]
+  FMCG: ["Hindustan Unilever", "Nestle India", "Britannia Industries", "Dabur India", "Marico", "Colgate-Palmolive India", "Godrej Consumer Products"]
+  Pharma: ["Sun Pharmaceutical", "Dr. Reddy's Laboratories", "Cipla", "Divi's Laboratories", "Lupin", "Torrent Pharmaceuticals", "Alkem Laboratories"]
+  Auto: ["Maruti Suzuki", "Tata Motors", "Bajaj Auto", "Hero MotoCorp", "Mahindra & Mahindra", "TVS Motor", "Eicher Motors"]
+  Energy: ["Reliance Industries", "NTPC", "Power Grid Corporation", "Coal India", "ONGC", "Indian Oil Corporation", "BPCL"]
+  Infra_Cement: ["Larsen & Toubro", "UltraTech Cement", "Adani Ports", "DLF", "Godrej Properties", "Prestige Estates"]
+  Financial_Services: ["Bajaj Finance", "Bajaj Finserv", "HDFC Life", "SBI Life", "ICICI Lombard", "Muthoot Finance"]
+  Consumer: ["Asian Paints", "Titan Company", "Trent", "Zomato", "Dmart (Avenue Supermarts)", "Nykaa"]
+
+mf_categories:
+  equity:
+    - Large Cap Fund
+    - Mid Cap Fund
+    - Small Cap Fund
+    - Large & Mid Cap Fund
+    - Flexi Cap Fund
+    - Multi Cap Fund
+    - ELSS (Tax Saving Fund)
+    - Sectoral/Thematic Fund
+    - Contra Fund
+    - Value Fund
+    - Dividend Yield Fund
+  debt:
+    - Liquid Fund
+    - Ultra Short Duration Fund
+    - Short Duration Fund
+    - Medium Duration Fund
+    - Long Duration Fund
+    - Corporate Bond Fund
+    - Banking & PSU Fund
+    - Gilt Fund
+    - Dynamic Bond Fund
+    - Credit Risk Fund
+  hybrid:
+    - Aggressive Hybrid Fund
+    - Conservative Hybrid Fund
+    - Balanced Advantage Fund (BAF)
+    - Multi Asset Allocation Fund
+    - Arbitrage Fund
+  passive:
+    - Index Fund (Nifty 50)
+    - Index Fund (Sensex)
+    - Index Fund (Nifty Next 50)
+    - Index Fund (Nifty Midcap 150)
+    - Gold ETF
+    - International Fund of Fund
+    - Nifty IT ETF
+    - Nifty Bank ETF
+
+fixed_income:
+  fd_tenures: ["7 days", "30 days", "90 days", "6 months", "1 year", "2 years", "3 years", "5 years"]
+  bond_types: ["G-Sec", "SDL", "Corporate Bond AAA", "Corporate Bond AA", "Tax-Free Bond", "Sovereign Gold Bond", "RBI Floating Rate Bond", "54EC Bond"]
+  nps_tiers: ["Tier I", "Tier II"]
+  govt_schemes: ["PPF", "EPF", "SSY (Sukanya Samriddhi)", "NSC", "KVP", "SCSS (Senior Citizen Savings Scheme)", "PM Vaya Vandana Yojana"]

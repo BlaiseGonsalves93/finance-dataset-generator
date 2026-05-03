@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""
+FinBot QLoRA Finetuning — Mistral 7B Instruct
+pip install transformers peft trl bitsandbytes datasets accelerate torch wandb
+
+Usage:
+  python finetune_qlora.py --dataset dataset/final/finbot_10k.jsonl --output models/finbot-v1 --test
+  python finetune_qlora.py --dataset dataset/final/finbot_10k.jsonl --output models/finbot-v1
+  python finetune_qlora.py --dataset dataset/final/finbot_10k.jsonl --output models/finbot-v1 --wandb
+  python finetune_qlora.py --infer-test models/finbot-v1/final
+"""
+
+import os, json, argparse
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional
+
+import torch
+from datasets import Dataset
+from transformers import (
+    AutoModelForCausalLM, AutoTokenizer,
+    BitsAndBytesConfig, TrainingArguments,
+)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
+from trl import SFTTrainer
+
+
+@dataclass
+class Cfg:
+    base_model : str   = "mistralai/Mistral-7B-Instruct-v0.2"
+    # LoRA
+    r          : int   = 64
+    alpha      : int   = 128
+    dropout    : float = 0.05
+    targets    : list  = field(default_factory=lambda:[
+        "q_proj","v_proj","k_proj","o_proj",
+        "gate_proj","up_proj","down_proj"
+    ])
+    # QLoRA
+    use_4bit   : bool  = True
+    compute_dt : str   = "bfloat16"
+    quant_type : str   = "nf4"
+    dbl_quant  : bool  = True
+    # Training
+    epochs     : int   = 3
+    batch      : int   = 4      # reduce to 2 if OOM
+    grad_accum : int   = 4      # effective batch = batch * grad_accum
+    lr         : float = 2e-4
+    wd         : float = 0.001
+    warmup     : float = 0.05
+    scheduler  : str   = "cosine"
+    max_grad   : float = 0.3
+    max_seq    : int   = 2048
+    fp16       : bool  = False
+    bf16       : bool  = True   # set False + fp16=True if not Ampere GPU
+    # Checkpoints
+    save_steps : int   = 200
+    log_steps  : int   = 25
+    eval_steps : int   = 200
+    keep       : int   = 3
+    val_split  : float = 0.05
+
+
+TMPL_WITH_INPUT = "<s>[INST] {sys}\n\n{inp} [/INST] {out}</s>"
+TMPL_NO_INPUT   = "<s>[INST] {sys} [/INST] {out}</s>"
+
+def fmt(s: dict) -> str:
+    sys = s.get("instruction","").strip()
+    inp = s.get("input","").strip()
+    out = s.get("output","").strip()
+    if inp:
+        return TMPL_WITH_INPUT.format(sys=sys, inp=inp, out=out)
+    return TMPL_NO_INPUT.format(sys=sys, out=out)
+
+
+def load_data(path: str, test_mode=False) -> Dataset:
+    rows = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try: rows.append(json.loads(line))
+                except: pass
+    if test_mode:
+        rows = rows[:100]
+        print(f"  [TEST] {len(rows)} samples")
+    else:
+        print(f"  {len(rows)} samples loaded")
+    return Dataset.from_list([{"text": fmt(r)} for r in rows])
+
+
+def load_model(cfg: Cfg):
+    print(f"\n  Model : {cfg.base_model}")
+    bnb = BitsAndBytesConfig(
+        load_in_4bit            = cfg.use_4bit,
+        bnb_4bit_compute_dtype  = getattr(torch, cfg.compute_dt),
+        bnb_4bit_quant_type     = cfg.quant_type,
+        bnb_4bit_use_double_quant = cfg.dbl_quant,
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        cfg.base_model, quantization_config=bnb,
+        device_map="auto", trust_remote_code=True,
+    )
+    model.config.use_cache      = False
+    model.config.pretraining_tp = 1
+
+    tok = AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True)
+    tok.pad_token    = tok.eos_token
+    tok.padding_side = "right"
+
+    model = prepare_model_for_kbit_training(model)
+    model = get_peft_model(model, LoraConfig(
+        r=cfg.r, lora_alpha=cfg.alpha, lora_dropout=cfg.dropout,
+        bias="none", task_type="CAUSAL_LM", target_modules=cfg.targets,
+    ))
+
+    tr = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    tt = sum(p.numel() for p in model.parameters())
+    print(f"  Trainable params: {tr:,} / {tt:,} ({100*tr/tt:.2f}%)")
+    return model, tok
+
+
+def train(dataset_path, output_dir, cfg=None, wandb=False, test=False):
+    if cfg is None: cfg = Cfg()
+    if test:
+        cfg.epochs = 1; cfg.save_steps = 50; cfg.log_steps = 10
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    with open(f"{output_dir}/cfg.json","w") as f:
+        json.dump(cfg.__dict__, f, indent=2, default=str)
+
+    print("\n📂 Dataset...")
+    ds    = load_data(dataset_path, test_mode=test)
+    split = ds.train_test_split(test_size=cfg.val_split, seed=42)
+    print(f"  Train {len(split['train'])} | Val {len(split['test'])}")
+
+    print("\n🤖 Model...")
+    model, tok = load_model(cfg)
+
+    args = TrainingArguments(
+        output_dir              = output_dir,
+        num_train_epochs        = cfg.epochs,
+        per_device_train_batch_size = cfg.batch,
+        gradient_accumulation_steps = cfg.grad_accum,
+        optim                   = "paged_adamw_32bit",
+        learning_rate           = cfg.lr,
+        weight_decay            = cfg.wd,
+        warmup_ratio            = cfg.warmup,
+        lr_scheduler_type       = cfg.scheduler,
+        max_grad_norm           = cfg.max_grad,
+        fp16                    = cfg.fp16,
+        bf16                    = cfg.bf16,
+        logging_steps           = cfg.log_steps,
+        save_steps              = cfg.save_steps,
+        eval_steps              = cfg.eval_steps,
+        save_total_limit        = cfg.keep,
+        evaluation_strategy     = "steps",
+        load_best_model_at_end  = True,
+        metric_for_best_model   = "eval_loss",
+        report_to               = "wandb" if wandb else "none",
+        run_name                = "finbot" if wandb else None,
+        group_by_length         = True,
+    )
+
+    trainer = SFTTrainer(
+        model               = model,
+        train_dataset       = split["train"],
+        eval_dataset        = split["test"],
+        tokenizer           = tok,
+        args                = args,
+        dataset_text_field  = "text",
+        max_seq_length      = cfg.max_seq,
+        packing             = False,
+    )
+
+    eff_batch = cfg.batch * cfg.grad_accum
+    print(f"\n🏋️  Training | epochs={cfg.epochs} | eff_batch={eff_batch} | lr={cfg.lr}")
+    trainer.train()
+
+    final = f"{output_dir}/final"
+    trainer.save_model(final)
+    tok.save_pretrained(final)
+    print(f"\n✅ Saved → {final}")
+    return trainer
+
+
+def infer_test(model_path: str):
+    print("\n🧪 Inference test...")
+    base = "mistralai/Mistral-7B-Instruct-v0.2"
+    tok  = AutoTokenizer.from_pretrained(base)
+    bnb  = BitsAndBytesConfig(load_in_4bit=True,
+                               bnb_4bit_compute_dtype=torch.bfloat16,
+                               bnb_4bit_quant_type="nf4")
+    bm   = AutoModelForCausalLM.from_pretrained(base, quantization_config=bnb, device_map="auto")
+    model = PeftModel.from_pretrained(bm, model_path)
+
+    qs = [
+        "What is the difference between ELSS and PPF for tax saving under 80C?",
+        "I am 30 years old, earning ₹1 lakh/month. How should I invest ₹20,000/month for retirement?",
+        "Should I invest in a Nifty 50 index fund or a large cap mutual fund?",
+    ]
+    for q in qs:
+        inp   = tok(f"<s>[INST] {q} [/INST]", return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            out = model.generate(**inp, max_new_tokens=300,
+                                  temperature=0.7, do_sample=True, top_p=0.9)
+        resp = tok.decode(out[0], skip_special_tokens=True).split("[/INST]")[-1].strip()
+        print(f"\n❓ {q}\n💬 {resp[:500]}\n" + "-"*60)
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dataset",    help="JSONL training file")
+    ap.add_argument("--output",     default="models/finbot-v1")
+    ap.add_argument("--wandb",      action="store_true")
+    ap.add_argument("--test",       action="store_true", help="100 samples, 1 epoch")
+    ap.add_argument("--infer-test", dest="infer", help="Path to trained model")
+    args = ap.parse_args()
+
+    if args.infer:
+        infer_test(args.infer)
+    else:
+        train(args.dataset, args.output, wandb=args.wandb, test=args.test)
