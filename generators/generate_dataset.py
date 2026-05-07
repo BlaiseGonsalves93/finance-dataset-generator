@@ -42,11 +42,7 @@ PERSONAS      = CONFIG["user_personas"]
 STOCKS        = CONFIG["indian_stocks"]
 MF_CATS       = CONFIG["mf_categories"]
 
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-client = genai.GenerativeModel(
-    model_name="gemini-2.5-flash-lite",
-    system_instruction=SYSTEM_PROMPT
-)
+
 
 # ── Seed data ─────────────────────────────────────────────────────────────────
 
