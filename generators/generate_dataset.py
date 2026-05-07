@@ -16,9 +16,25 @@ from pathlib import Path
 from typing import Optional
 import yaml
 
-import google.generativeai as genai
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+import torch
 
-with open("C:\\Users\\darkl\\Desktop\\Finance project - Warren buffet\\config.yaml", "r") as f:
+model_name = "mistralai/Mistral-7B-Instruct-v0.2"
+
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_use_double_quant=True,
+)
+
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    device_map="auto",
+    quantization_config=bnb_config
+)
+with open("/content/finance-dataset-generator/config.yaml", "r") as f:
     CONFIG = yaml.safe_load(f)
 
 SYSTEM_PROMPT = CONFIG["system_prompt"].strip()
@@ -142,21 +158,20 @@ TAX_SCENARIOS = [
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def call_llm(prompt: str, system: Optional[str] = None, max_tokens: int = 1200) -> str:
-    for attempt in range(3):
-        try:
-            response = client.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=max_tokens,
-                    temperature=0.7,
-                )
-            )
-            return response.text.strip()
-        except Exception as e:
-            print(f"  API error (attempt {attempt+1}): {e}")
-            time.sleep(2 ** attempt)
-    return ""
+def call_llm(prompt: str, system=None, max_tokens=300):
+    full_prompt = f"<s>[INST] {system or ''}\n{prompt} [/INST]"
+
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
+
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=max_tokens,
+        temperature=0.7,
+        do_sample=True,
+        top_p=0.9
+    )
+
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def make_alpaca(input_text: str, output: str) -> dict:
     return {
